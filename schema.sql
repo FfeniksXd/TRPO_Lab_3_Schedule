@@ -4,8 +4,15 @@
 CREATE TABLE groups (id SERIAL PRIMARY KEY, name VARCHAR(50) NOT NULL UNIQUE);
 CREATE TABLE teachers (id SERIAL PRIMARY KEY, full_name VARCHAR(200) NOT NULL UNIQUE);
 CREATE TABLE subjects (id SERIAL PRIMARY KEY, name VARCHAR(150) NOT NULL UNIQUE);
-CREATE TABLE classrooms (id SERIAL PRIMARY KEY, number VARCHAR(50) NOT NULL UNIQUE);
 CREATE TABLE class_types (id SERIAL PRIMARY KEY, name VARCHAR(50) NOT NULL UNIQUE);
+
+-- Тип занятия теперь привязан к аудитории, а не к расписанию
+CREATE TABLE classrooms (
+    id            SERIAL PRIMARY KEY,
+    number        VARCHAR(50) NOT NULL UNIQUE,
+    capacity      INT NOT NULL CHECK (capacity > 0),
+    class_type_id INT NOT NULL REFERENCES class_types(id)
+);
 
 CREATE TABLE schedule (
     id            SERIAL PRIMARY KEY,
@@ -13,7 +20,6 @@ CREATE TABLE schedule (
     teacher_id    INT NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
     subject_id    INT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
     classroom_id  INT NOT NULL REFERENCES classrooms(id) ON DELETE CASCADE,
-    class_type_id INT NOT NULL REFERENCES class_types(id) ON DELETE CASCADE,
     lesson_date   DATE NOT NULL,
     pair_number   SMALLINT NOT NULL CHECK (pair_number BETWEEN 1 AND 8),
 
@@ -28,4 +34,7 @@ INSERT INTO class_types (name) VALUES ('Лекция'), ('Практика'), ('
 INSERT INTO groups (name) VALUES ('ИУ7-11Б'), ('ИУ7-12Б'), ('МЗО-319БВ-24');
 INSERT INTO teachers (full_name) VALUES ('Иванов И.И.'), ('Петров П.П.'), ('Сидорова А.А.');
 INSERT INTO subjects (name) VALUES ('Базы данных'), ('Программирование'), ('Высшая математика');
-INSERT INTO classrooms (number) VALUES ('301'), ('402'), ('Актовый зал');
+INSERT INTO classrooms (number, capacity, class_type_id) VALUES
+    ('301', 60, 1),           -- Лекция
+    ('402', 25, 2),           -- Практика
+    ('Актовый зал', 300, 1);  -- Лекция

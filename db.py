@@ -9,6 +9,7 @@ class Database:
             "host": "localhost",
             "port": "5432"
         }
+        psycopg2.connect(**self.conn_params).close()   # проверка подключения при старте
 
     def execute_query(self, query, params=None):
         with psycopg2.connect(**self.conn_params) as conn:
@@ -34,12 +35,23 @@ class Database:
     def get_classrooms(self):
         return self.execute_query("SELECT id, number FROM classrooms ORDER BY number")
 
+    def get_classrooms_full(self):
+        """Аудитории с вместимостью и типом занятий:
+        (id, number, capacity, class_type_id, class_type_name)"""
+        return self.execute_query("""
+            SELECT c.id, c.number, c.capacity, c.class_type_id, ct.name
+            FROM classrooms c
+            JOIN class_types ct ON c.class_type_id = ct.id
+            ORDER BY c.number
+        """)
+
     def get_class_types(self):
         return self.execute_query("SELECT id, name FROM class_types ORDER BY name")
 
     # --- МЕТОДЫ ДЛЯ РАСПИСАНИЯ ---
     def get_schedule(self):
-        """Возвращает расписание с расшифровкой ID в названия через JOIN"""
+        """Возвращает расписание с расшифровкой ID в названия через JOIN.
+        Тип занятия берётся через аудиторию."""
         query = """
             SELECT 
                 s.id, s.lesson_date, s.pair_number,
@@ -51,17 +63,18 @@ class Database:
             JOIN teachers t ON s.teacher_id = t.id
             JOIN subjects sub ON s.subject_id = sub.id
             JOIN classrooms c ON s.classroom_id = c.id
-            JOIN class_types ct ON s.class_type_id = ct.id
+            JOIN class_types ct ON c.class_type_id = ct.id
             ORDER BY s.lesson_date, s.pair_number
         """
         return self.execute_query(query)
 
     def add_schedule(self, data):
-        """Добавляет занятие. Если есть конфликт (накладка), БД выбросит ошибку UniqueViolation"""
+        """Добавляет занятие. Если есть конфликт (накладка), БД выбросит ошибку UniqueViolation.
+        data = (group_id, teacher_id, subject_id, classroom_id, lesson_date, pair_number)"""
         query = """
             INSERT INTO schedule 
-            (group_id, teacher_id, subject_id, classroom_id, class_type_id, lesson_date, pair_number)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (group_id, teacher_id, subject_id, classroom_id, lesson_date, pair_number)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """
         self.execute_dml(query, data)
 
@@ -78,8 +91,11 @@ class Database:
     def add_subject(self, name):
         self.execute_dml("INSERT INTO subjects (name) VALUES (%s)", (name,))
         
-    def add_classroom(self, number):
-        self.execute_dml("INSERT INTO classrooms (number) VALUES (%s)", (number,))
+    def add_classroom(self, number, capacity, class_type_id):
+        self.execute_dml(
+            "INSERT INTO classrooms (number, capacity, class_type_id) VALUES (%s, %s, %s)",
+            (number, capacity, class_type_id)
+        )
 
         # --- МЕТОД ДЛЯ ОТЧЕТОВ ---
     def get_report_data(self, report_type):
@@ -107,12 +123,13 @@ class Database:
             """
             headers = ["Аудитория", "Количество занятий"]
             
-        # 3. Распределение по видам занятий
+        # 3. Распределение по видам занятий (через аудитории)
         elif report_type == "class_types":
             query = """
                 SELECT ct.name AS class_type, COUNT(s.id) AS count
                 FROM class_types ct
-                LEFT JOIN schedule s ON ct.id = s.class_type_id
+                LEFT JOIN classrooms c ON c.class_type_id = ct.id
+                LEFT JOIN schedule s ON s.classroom_id = c.id
                 GROUP BY ct.name
                 ORDER BY count DESC
             """
@@ -151,8 +168,11 @@ class Database:
     def delete_subject(self, id):
         self.execute_dml("DELETE FROM subjects WHERE id = %s", (id,))
 
-    def update_classroom(self, id, number):
-        self.execute_dml("UPDATE classrooms SET number = %s WHERE id = %s", (number, id))
+    def update_classroom(self, id, number, capacity, class_type_id):
+        self.execute_dml(
+            "UPDATE classrooms SET number = %s, capacity = %s, class_type_id = %s WHERE id = %s",
+            (number, capacity, class_type_id, id)
+        )
     def delete_classroom(self, id):
         self.execute_dml("DELETE FROM classrooms WHERE id = %s", (id,))
 
@@ -216,20 +236,21 @@ class Database:
 
         # --- МЕТОДЫ ДЛЯ ФИЛЬТРАЦИИ И РЕДАКТИРОВАНИЯ РАСПИСАНИЯ ---
     def get_schedule_filtered(self, group_id=None, teacher_id=None, classroom_id=None):
-        """Возвращает расписание с учетом выбранных фильтров"""
+        """Возвращает расписание с учетом выбранных фильтров.
+        Колонки: 0-7 для отображения, 8-11 — ID для редактирования."""
         query = """
             SELECT 
                 s.id, s.lesson_date, s.pair_number,
                 g.name AS group_name, t.full_name AS teacher_name,
                 sub.name AS subject_name, c.number AS classroom,
                 ct.name AS class_type,
-                s.group_id, s.teacher_id, s.subject_id, s.classroom_id, s.class_type_id
+                s.group_id, s.teacher_id, s.subject_id, s.classroom_id
             FROM schedule s
             JOIN groups g ON s.group_id = g.id
             JOIN teachers t ON s.teacher_id = t.id
             JOIN subjects sub ON s.subject_id = sub.id
             JOIN classrooms c ON s.classroom_id = c.id
-            JOIN class_types ct ON s.class_type_id = ct.id
+            JOIN class_types ct ON c.class_type_id = ct.id
             WHERE 1=1
         """
         params = []
@@ -249,11 +270,12 @@ class Database:
         return self.execute_query(query, tuple(params))
 
     def update_schedule(self, s_id, data):
-        """Обновляет запись в расписании"""
+        """Обновляет запись в расписании.
+        data = (group_id, teacher_id, subject_id, classroom_id, lesson_date, pair_number)"""
         query = """
             UPDATE schedule SET 
             group_id=%s, teacher_id=%s, subject_id=%s, classroom_id=%s, 
-            class_type_id=%s, lesson_date=%s, pair_number=%s
+            lesson_date=%s, pair_number=%s
             WHERE id=%s
         """
         self.execute_dml(query, data + (s_id,))

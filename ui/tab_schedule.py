@@ -28,13 +28,20 @@ class ScheduleDialog(QDialog):
         self.teacher_combo = QComboBox()
         self.subject_combo = QComboBox()
         self.classroom_combo = QComboBox()
-        self.type_combo = QComboBox()
 
         for id, name in self.db.get_groups(): self.group_combo.addItem(name, id)
         for id, name in self.db.get_teachers(): self.teacher_combo.addItem(name, id)
         for id, name in self.db.get_subjects(): self.subject_combo.addItem(name, id)
-        for id, name in self.db.get_classrooms(): self.classroom_combo.addItem(name, id)
-        for id, name in self.db.get_class_types(): self.type_combo.addItem(name, id)
+
+        # Аудитории: запоминаем вместимость и тип, чтобы показывать их в окне
+        self.classroom_info = {}
+        for cid, number, capacity, type_id, type_name in self.db.get_classrooms_full():
+            self.classroom_combo.addItem(number, cid)
+            self.classroom_info[cid] = (capacity, type_name)
+
+        # Метка с информацией о выбранной аудитории (только в окне создания/редактирования)
+        self.info_label = QLabel()
+        self.classroom_combo.currentIndexChanged.connect(self.update_room_info)
 
         form.addRow("Дата:", self.date_edit)
         form.addRow("Пара:", self.pair_spin)
@@ -42,19 +49,20 @@ class ScheduleDialog(QDialog):
         form.addRow("Предмет:", self.subject_combo)
         form.addRow("Преподаватель:", self.teacher_combo)
         form.addRow("Аудитория:", self.classroom_combo)
-        form.addRow("Вид занятия:", self.type_combo)
+        form.addRow("", self.info_label)
         layout.addLayout(form)
 
         # Если передали данные (редактирование), заполняем поля
         if data:
-            # data = (id, date, pair, group_name, teacher_name, sub_name, room, type_name, group_id, teacher_id, sub_id, room_id, type_id)
+            # data = (id, date, pair, NULL, NULL, NULL, NULL, NULL, group_id, teacher_id, sub_id, room_id)
             self.date_edit.setDate(data[1])
             self.pair_spin.setValue(data[2])
             self.group_combo.setCurrentIndex(self.group_combo.findData(data[8]))
             self.teacher_combo.setCurrentIndex(self.teacher_combo.findData(data[9]))
             self.subject_combo.setCurrentIndex(self.subject_combo.findData(data[10]))
             self.classroom_combo.setCurrentIndex(self.classroom_combo.findData(data[11]))
-            self.type_combo.setCurrentIndex(self.type_combo.findData(data[12]))
+
+        self.update_room_info()
 
         btn_layout = QHBoxLayout()
         self.save_btn = QPushButton("Сохранить")
@@ -66,12 +74,17 @@ class ScheduleDialog(QDialog):
         self.save_btn.clicked.connect(self.accept)
         self.cancel_btn.clicked.connect(self.reject)
 
+    def update_room_info(self):
+        capacity, type_name = self.classroom_info.get(
+            self.classroom_combo.currentData(), ("-", "-")
+        )
+        self.info_label.setText(f"Тип: {type_name}  |  Вместимость: {capacity} мест")
+
     def get_data(self):
         return (
             self.group_combo.currentData(), self.teacher_combo.currentData(),
             self.subject_combo.currentData(), self.classroom_combo.currentData(),
-            self.type_combo.currentData(), self.date_edit.date().toPython(),
-            self.pair_spin.value()
+            self.date_edit.date().toPython(), self.pair_spin.value()
         )
 
 class ScheduleTab(QWidget):
@@ -157,7 +170,7 @@ class ScheduleTab(QWidget):
             self.table.setItem(row_idx, 4, QTableWidgetItem(row_data[5])) # Предмет
             self.table.setItem(row_idx, 5, QTableWidgetItem(row_data[4])) # Преподаватель
             self.table.setItem(row_idx, 6, QTableWidgetItem(row_data[6]))
-            self.table.setItem(row_idx, 7, QTableWidgetItem(row_data[7]))
+            self.table.setItem(row_idx, 7, QTableWidgetItem(row_data[7])) # Тип (через аудиторию)
         self.table.setSortingEnabled(True)
 
     def reset_filters(self):
@@ -179,7 +192,7 @@ class ScheduleTab(QWidget):
         # Делаем быстрый запрос по ID
         data = self.db.execute_query("""
             SELECT s.id, s.lesson_date, s.pair_number, NULL, NULL, NULL, NULL, NULL,
-                   s.group_id, s.teacher_id, s.subject_id, s.classroom_id, s.class_type_id
+                   s.group_id, s.teacher_id, s.subject_id, s.classroom_id
             FROM schedule s WHERE s.id = %s
         """, (s_id,))[0]
 
